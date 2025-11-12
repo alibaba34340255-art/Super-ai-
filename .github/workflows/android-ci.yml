@@ -1,20 +1,45 @@
+# Robust Android CI for ubuntu-latest
 name: Android CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+    paths:
+      - 'android-app/**'
+      - 'build.gradle*'
+      - 'gradle/**'
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+    paths:
+      - 'android-app/**'
+      - 'build.gradle*'
+      - 'gradle/**'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # Add a timeout to prevent hung builds
+    timeout-minutes: 40
+    env:
+      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+      SDK_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+      ANDROID_PLATFORM: "platforms;android-33"
+      ANDROID_BUILD_TOOLS: "build-tools;33.0.2"
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-    - name: Set up JDK 17
+    - name: Setup JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
@@ -24,17 +49,141 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x android-app/gradlew
 
+    - name: Cache Gradle
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-cache-${{ runner.os }}-${{ hashFiles('**/android-app/gradle/wrapper/gradle-wrapper.properties') }}-${{ hashFiles('**/android-app/**/build.gradle*') }}
+        restore-keys: |
+          gradle-cache-${{ runner.os }}-
+
+    - name: Cache Android cmdline-tools
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.ANDROID_SDK_ROOT }}/cmdline-tools
+        key: android-cmdline-${{ runner.os }}-${{ hashFiles('.github/workflows/android-ci.yml') }}
+        restore-keys: android-cmdline-${{ runner.os }}-
+
+    - name: Install Android cmdline-tools & SDK (with retry)
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+        retry() {
+          local n=1; local max=3; local delay=8
+          until "$@"; do
+            if [[ $n -ge $max ]]; then
+              echo "Command failed after $n attempts: $*"
+              return 1
+            fi
+            echo "Attempt $n failed for: $* — retrying in $delay s..."
+            sleep $delay
+            n=$((n+1))
+          done
+        }
+        mkdir -p "$ANDROID_SDK_ROOT" "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT/licenses"
+        if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ] || [ -z "$(ls -A $ANDROID_SDK_ROOT/cmdline-tools/latest 2>/dev/null)" ]; then
+          tmpzip=/tmp/cmdline-tools.zip
+          retry wget -q "$SDK_TOOLS_URL" -O "$tmpzip"
+          rm -rf /tmp/cmdline-tools
+          mkdir -p /tmp/cmdline-tools
+          unzip -q "$tmpzip" -d /tmp/cmdline-tools
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv /tmp/cmdline-tools/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
+          rm -f "$tmpzip"
+        fi
+        export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+        retry yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+
     - name: Accept Android SDK licenses
-      run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null
+      run: |
+        set -euo pipefail
+        export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
 
-    # The 'build' step is redundant as 'assembleDebug' also compiles the code.
-    # It has been removed to speed up the workflow and reduce potential points of failure.
-    - name: Build debug APK with detailed logging
+    - name: Ensure source directories exist (CI-only)
+      run: |
+        mkdir -p android-app/app/src/main/kotlin
+        mkdir -p android-app/app/src/debug/java
+        mkdir -p android-app/app/src/debug/kotlin
+        touch android-app/app/src/main/kotlin/.gitkeep || true
+        touch android-app/app/src/debug/java/.gitkeep || true
+        touch android-app/app/src/debug/kotlin/.gitkeep || true
+
+    - name: Gradle assembleDebug (with retries & logs)
       working-directory: ./android-app
-      run: ./gradlew assembleDebug --stacktrace --info --console=plain
+      shell: bash
+      env:
+        GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+      run: |
+        set -euo pipefail
+        mkdir -p build-artifacts
+        attempt=1
+        max_attempts=3
+        exit_code=0
+        while [ $attempt -le $max_attempts ]; do
+          echo "Gradle build attempt $attempt/$max_attempts"
+          ./gradlew assembleDebug --stacktrace --warning-mode=all 2>&1 | tee build-artifacts/build.log
+          exit_code=${PIPESTATUS[0]}
+          if [ "$exit_code" -eq 0 ]; then
+            echo "Build succeeded on attempt $attempt"
+            break
+          fi
+          echo "Build failed (exit $exit_code) on attempt $attempt"
+          attempt=$((attempt+1))
+          sleep 10
+        done
+        if [ "$exit_code" -ne 0 ]; then
+          echo "Build failed after $max_attempts attempts — see build-artifacts/build.log"
+          exit $exit_code
+        fi
 
-    - name: Upload APK as artifact
+    - name: Upload build log (always)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: android-app/build-artifacts/build.log
+
+    - name: Verify APK exists and upload artifact
+      run: |
+        apk_path="android-app/app/build/outputs/apk/debug/app-debug.apk"
+        if [ ! -f "$apk_path" ]; then
+          echo "APK not found at $apk_path"
+          ls -R android-app/app/build || true
+          exit 1
+        fi
+      shell: bash
+
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug.apk
         path: android-app/app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Open GitHub issue on persistent failure
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const repo = context.repo;
+          let body = `Automated CI: build failed for commit ${{ github.sha }}.\n\nFirst ~400 lines of build log:\n\n`;
+          try {
+            const full = fs.readFileSync('android-app/build-artifacts/build.log','utf8');
+            body += "```\n" + full.split('\n').slice(0,400).join('\n') + "\n```\n\nFull log attached as artifact.";
+          } catch (e) {
+            body += "Could not read build log.";
+          }
+          await github.rest.issues.create({
+            owner: repo.owner,
+            repo: repo.repo,
+            title: `CI: build failed — ${new Date().toISOString().split('T')[0]}`,
+            body: body,
+            labels: ['ci','build-failure','automated']
+          })
