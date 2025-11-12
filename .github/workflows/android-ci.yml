@@ -30,12 +30,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
       SDK_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
       ANDROID_PLATFORM: "platforms;android-33"
       ANDROID_BUILD_TOOLS: "build-tools;33.0.2"
 
     steps:
+    - name: Set ANDROID_SDK_ROOT
+      run: echo "ANDROID_SDK_ROOT=${{ runner.temp }}/android-sdk" >> $GITHUB_ENV
+
     - name: Checkout
       uses: actions/checkout@v4
 
