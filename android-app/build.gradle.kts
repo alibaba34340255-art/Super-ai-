@@ -1,6 +1,6 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 buildscript {
-    extra.set("kotlinVersion", "1.9.10")
+    extra.set("kotlinVersion", "1.9.20")
 }
 plugins {
     id("com.android.application") version "8.2.0" apply false
