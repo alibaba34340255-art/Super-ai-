@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.*
+import coil.compose.AsyncImage
 
 // --- Data Classes for New Backend ---
 @Serializable
@@ -242,7 +243,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                         label = { Text("Type or speak...") }
                     )
                     IconButton(onClick = onVoiceInput) {
-                        Icon(Icons.Default.Mic, contentDescription = "Voice Command")
+                        Icon(Icons.Filled.Mic, contentDescription = "Voice Command")
                     }
                     Button(
                         onClick = {
@@ -264,8 +265,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
         }
     }
 }
-
-import coil.compose.AsyncImage
 
 @Composable
 fun MessageBubble(message: ChatMessage) {
