@@ -3,8 +3,20 @@ name: Android CI
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'android-app/**'
+      - 'gradle/**'
+      - 'build.gradle*'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'android-app/**'
+      - 'gradle/**'
+      - 'build.gradle*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
