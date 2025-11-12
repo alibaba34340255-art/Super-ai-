@@ -73,22 +73,10 @@ jobs:
       run: |
         set -euo pipefail
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry() {
-          local n=1; local max=3; local delay=8
-          until "$@"; do
-            if [[ $n -ge $max ]]; then
-              echo "Command failed after $n attempts: $*"
-              return 1
-            fi
-            echo "Attempt $n failed for: $* — retrying in $delay s..."
-            sleep $delay
-            n=$((n+1))
-          done
-        }
         mkdir -p "$ANDROID_SDK_ROOT" "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT/licenses"
         if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ] || [ -z "$(ls -A $ANDROID_SDK_ROOT/cmdline-tools/latest 2>/dev/null)" ]; then
           tmpzip=/tmp/cmdline-tools.zip
-          retry wget -q "$SDK_TOOLS_URL" -O "$tmpzip"
+          wget -q "$SDK_TOOLS_URL" -O "$tmpzip"
           rm -rf /tmp/cmdline-tools
           mkdir -p /tmp/cmdline-tools
           unzip -q "$tmpzip" -d /tmp/cmdline-tools
@@ -97,7 +85,7 @@ jobs:
           rm -f "$tmpzip"
         fi
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
+        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS" || true
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
