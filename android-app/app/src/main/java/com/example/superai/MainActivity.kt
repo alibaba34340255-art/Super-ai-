@@ -20,18 +20,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import coil.compose.AsyncImage
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp // Import OkHttp engine
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -73,7 +75,7 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
     private val _currentAiMode = mutableStateOf("powerful") // "powerful" or "own_system"
     val currentAiMode: State<String> = _currentAiMode
 
-    private val client = HttpClient(OkHttp) { // Use the OkHttp engine
+    private val client = HttpClient(OkHttp) {
         install(ContentNegotiation) {
             json(Json {
                 isLenient = true
@@ -81,16 +83,13 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
             })
         }
     }
-    // Corrected URL for the Python backend running on the host machine from the Android emulator
     private val backendUrl = "http://10.0.2.2:5000/api/generate"
-
-    // Placeholder for user-defined API key from settings
-    private val customGeminiApiKey = mutableStateOf<String?>(null) // e.g., "YOUR_GEMINI_API_KEY"
+    private val customGeminiApiKey = mutableStateOf<String?>(null)
 
     fun sendCommand(command: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            _messages.add(ChatMessage(text = command, isUser = true)) // Add user message
+            _messages.add(ChatMessage(text = command, isUser = true))
             try {
                 val requestBody = BackendRequest(
                     prompt = command,
@@ -112,7 +111,7 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
                     modelUsed = backendResponse.model_used,
                     diagnosticReport = backendResponse.diagnostic_report
                 )
-                _messages.add(aiMessage) // Add AI message
+                _messages.add(aiMessage)
                 tts.speak(payload.text, TextToSpeech.QUEUE_FLUSH, null, null)
 
             } catch (e: Exception) {
@@ -226,7 +225,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                 TopAppBar(
                     title = { Text("Super AI") },
                     actions = {
-                        // Settings icon - placeholder for future navigation
                         IconButton(onClick = { /* Navigate to settings */ }) {
                            // Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
@@ -240,7 +238,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
-                // Mode Toggle Switch
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -260,7 +257,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
 
                 Spacer(Modifier.height(16.dp))
 
-                // Messages Display
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(messages) { message ->
                         MessageBubble(message = message)
@@ -269,7 +265,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
 
                 Spacer(Modifier.height(8.dp))
 
-                // "Sync to Drive" Button - Placeholder
                 Button(onClick = { /* TODO: Implement file sharing logic */ }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                     Text("Sync Archive to Drive")
                 }
@@ -277,7 +272,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
 
                 Spacer(Modifier.height(8.dp))
 
-                // Input Row
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = text,
@@ -286,7 +280,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                         label = { Text("Type or speak...") }
                     )
                     IconButton(onClick = onVoiceInput) {
-                        Icon(Icons.Default.Mic, contentDescription = "Voice Command")
+                        Icon(Icons.Filled.Mic, contentDescription = "Voice Command")
                     }
                     Button(
                         onClick = {
@@ -309,8 +303,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
     }
 }
 
-import coil.compose.AsyncImage
-
 @Composable
 fun MessageBubble(message: ChatMessage) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -329,7 +321,6 @@ fun MessageBubble(message: ChatMessage) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(text = message.text)
 
-                // Display image if URL exists
                 if (!message.imageUrl.isNullOrEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     AsyncImage(
@@ -341,7 +332,6 @@ fun MessageBubble(message: ChatMessage) {
                     )
                 }
 
-                // Researcher Panel for AI messages
                 if (!message.isUser) {
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { isExpanded = !isExpanded }) {
