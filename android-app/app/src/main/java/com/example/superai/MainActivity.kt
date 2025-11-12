@@ -10,6 +10,7 @@ import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,7 +36,6 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.*
-import coil.compose.AsyncImage
 
 // --- Data Classes for New Backend ---
 @Serializable
@@ -127,10 +127,24 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
     fun setAiMode(mode: String) { _currentAiMode.value = mode }
 }
 
+// --- ViewModel Factory ---
+class MainViewModelFactory(private val tts: TextToSpeech) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return MainViewModel(tts) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
 // --- Main Activity ---
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener, RecognitionListener {
     private lateinit var tts: TextToSpeech
     private lateinit var speechRecognizer: SpeechRecognizer
+    private val viewModel: MainViewModel by viewModels {
+        MainViewModelFactory(tts)
+    }
     private val speechRecognizerIntent by lazy {
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -142,12 +156,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         tts = TextToSpeech(this, this)
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer.setRecognitionListener(this)
 
         val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
 
         setContent {
-            val viewModel = MainViewModel(tts)
             SuperAIApp(viewModel = viewModel, onVoiceInput = {
                 speechRecognizer.startListening(speechRecognizerIntent)
             })
@@ -166,6 +180,35 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         tts.shutdown()
         speechRecognizer.destroy()
     }
+
+    // --- RecognitionListener Methods ---
+    override fun onReadyForSpeech(params: Bundle?) {}
+    override fun onBeginningOfSpeech() {}
+    override fun onRmsChanged(rmsdB: Float) {}
+    override fun onBufferReceived(buffer: ByteArray?) {}
+    override fun onEndOfSpeech() {}
+    override fun onError(error: Int) {
+        val errorMessage = when (error) {
+            SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+            SpeechRecognizer.ERROR_CLIENT -> "Client side error"
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+            SpeechRecognizer.ERROR_NETWORK -> "Network error"
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+            SpeechRecognizer.ERROR_NO_MATCH -> "No match"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+            SpeechRecognizer.ERROR_SERVER -> "Error from server"
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+            else -> "Unknown speech recognition error"
+        }
+        viewModel.sendCommand("Error: $errorMessage")
+    }
+    override fun onResults(results: Bundle?) {
+        results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.get(0)?.let {
+            viewModel.sendCommand(it)
+        }
+    }
+    override fun onPartialResults(partialResults: Bundle?) {}
+    override fun onEvent(eventType: Int, params: Bundle?) {}
 }
 
 // --- UI ---
@@ -243,7 +286,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                         label = { Text("Type or speak...") }
                     )
                     IconButton(onClick = onVoiceInput) {
-                        Icon(Icons.Filled.Mic, contentDescription = "Voice Command")
+                        Icon(Icons.Default.Mic, contentDescription = "Voice Command")
                     }
                     Button(
                         onClick = {
@@ -265,6 +308,8 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
         }
     }
 }
+
+import coil.compose.AsyncImage
 
 @Composable
 fun MessageBubble(message: ChatMessage) {
