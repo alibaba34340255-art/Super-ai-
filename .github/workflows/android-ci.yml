@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
     - name: Checkout
@@ -25,34 +25,60 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x android-app/gradlew
 
-    - name: Install Android commandline tools and SDK (safe install)
+    - name: Install Android command-line tools and SDK (safe install)
       run: |
         set -e
         export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
         mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT/licenses"
-        # Download command-line tools (versioned file name may change over time)
+        # Download command-line tools (pin to a recent working version if you prefer)
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O /tmp/cmdline-tools.zip
         unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
-        # The zip extracts a directory named 'cmdline-tools'; move it to the expected path
         mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
         mv /tmp/cmdline-tools/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
         rm -rf /tmp/cmdline-tools /tmp/cmdline-tools.zip
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        # Install essential SDK components (adjust API level / build-tools if you need different versions)
         yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
-    - name: Accept Android SDK licenses (idempotent)
+    - name: Accept Android SDK licenses
       run: |
         set -e
         export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
         yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
 
-    - name: Build debug APK with detailed logging
+    - name: Ensure source directories exist to silence warnings
+      run: |
+        mkdir -p android-app/app/src/main/kotlin
+        mkdir -p android-app/app/src/debug/java
+        mkdir -p android-app/app/src/debug/kotlin
+        # create .gitkeep only in CI (do not commit)
+        touch android-app/app/src/main/kotlin/.gitkeep || true
+        touch android-app/app/src/debug/java/.gitkeep || true
+        touch android-app/app/src/debug/kotlin/.gitkeep || true
+
+    - name: Build debug APK (verbose but safe)
       working-directory: ./android-app
-      run: ./gradlew assembleDebug --stacktrace --info --debug
+      run: |
+        set -o pipefail
+        ./gradlew assembleDebug --stacktrace --warning-mode=all 2>&1 | tee build.log
+        build_exit=${PIPESTATUS[0]}
+        if [ $build_exit -ne 0 ]; then
+          echo "Gradle build failed — dumping tail of build.log"
+          tail -n +1 build.log | sed -n '1,400p'
+          exit $build_exit
+        fi
+
+    - name: Verify APK exists and upload artifact
+      run: |
+        apk_path="android-app/app/build/outputs/apk/debug/app-debug.apk"
+        if [ ! -f "$apk_path" ]; then
+          echo "APK not found at $apk_path"
+          ls -R android-app/app/build || true
+          exit 1
+        fi
+      shell: bash
 
     - name: Upload APK as artifact
       uses: actions/upload-artifact@v4
