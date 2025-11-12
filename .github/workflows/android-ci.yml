@@ -3,13 +3,13 @@ name: Android CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "add-android-ci"]
     paths:
       - 'android-app/**'
       - 'build.gradle*'
       - 'gradle/**'
   pull_request:
-    branches: ["main"]
+    branches: ["main", "add-android-ci"]
     paths:
       - 'android-app/**'
       - 'build.gradle*'
