@@ -81,10 +81,7 @@ class MainViewModel(private val tts: TextToSpeech, private val sharedViewModel: 
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            json(Json {
-                isLenient = true
-                ignoreUnknownKeys = true
-            })
+            json()
         }
         install(HttpRequestRetry) {
             retryOnServerErrors(maxRetries = 2)
