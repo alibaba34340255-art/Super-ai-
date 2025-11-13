@@ -81,7 +81,10 @@ class MainViewModel(private val tts: TextToSpeech, private val sharedViewModel: 
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            json()
+            json(Json {
+                isLenient = true
+                ignoreUnknownKeys = true
+            })
         }
         install(HttpRequestRetry) {
             retryOnServerErrors(maxRetries = 2)
@@ -188,6 +191,7 @@ fun SuperAIApp(viewModel: MainViewModel, sharedViewModel: SharedViewModel, onVoi
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: MainViewModel, onVoiceInput: () -> Unit, onSettingsClick: () -> Unit) {
     var text by remember { mutableStateOf("") }
