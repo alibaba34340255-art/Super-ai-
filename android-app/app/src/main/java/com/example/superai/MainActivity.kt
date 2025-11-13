@@ -32,6 +32,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -76,10 +77,10 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            Json {
+            json(Json {
                 isLenient = true
                 ignoreUnknownKeys = true
-            }
+            })
         }
         install(HttpRequestRetry) {
             retryOnServerErrors(maxRetries = 2)
