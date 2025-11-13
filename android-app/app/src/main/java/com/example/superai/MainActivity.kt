@@ -10,7 +10,6 @@ import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,20 +19,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import coil.compose.AsyncImage
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -75,21 +73,28 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
     private val _currentAiMode = mutableStateOf("powerful") // "powerful" or "own_system"
     val currentAiMode: State<String> = _currentAiMode
 
-    private val client = HttpClient(OkHttp) {
+    private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
             json(Json {
                 isLenient = true
                 ignoreUnknownKeys = true
             })
         }
+        install(HttpRequestRetry) {
+            retryOnServerErrors(maxRetries = 2)
+            exponentialDelay()
+        }
     }
+    // Corrected URL for the Python backend running on the host machine from the Android emulator
     private val backendUrl = "http://10.0.2.2:5000/api/generate"
-    private val customGeminiApiKey = mutableStateOf<String?>(null)
+
+    // Placeholder for user-defined API key from settings
+    private val customGeminiApiKey = mutableStateOf<String?>(null) // e.g., "YOUR_GEMINI_API_KEY"
 
     fun sendCommand(command: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            _messages.add(ChatMessage(text = command, isUser = true))
+            _messages.add(ChatMessage(text = command, isUser = true)) // Add user message
             try {
                 val requestBody = BackendRequest(
                     prompt = command,
@@ -111,7 +116,7 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
                     modelUsed = backendResponse.model_used,
                     diagnosticReport = backendResponse.diagnostic_report
                 )
-                _messages.add(aiMessage)
+                _messages.add(aiMessage) // Add AI message
                 tts.speak(payload.text, TextToSpeech.QUEUE_FLUSH, null, null)
 
             } catch (e: Exception) {
@@ -126,24 +131,10 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
     fun setAiMode(mode: String) { _currentAiMode.value = mode }
 }
 
-// --- ViewModel Factory ---
-class MainViewModelFactory(private val tts: TextToSpeech) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
-            return MainViewModel(tts) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
-    }
-}
-
 // --- Main Activity ---
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener, RecognitionListener {
+class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private lateinit var tts: TextToSpeech
     private lateinit var speechRecognizer: SpeechRecognizer
-    private val viewModel: MainViewModel by viewModels {
-        MainViewModelFactory(tts)
-    }
     private val speechRecognizerIntent by lazy {
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -155,12 +146,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener, Recogniti
         super.onCreate(savedInstanceState)
         tts = TextToSpeech(this, this)
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        speechRecognizer.setRecognitionListener(this)
 
         val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
 
         setContent {
+            val viewModel = MainViewModel(tts)
             SuperAIApp(viewModel = viewModel, onVoiceInput = {
                 speechRecognizer.startListening(speechRecognizerIntent)
             })
@@ -179,35 +170,6 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener, Recogniti
         tts.shutdown()
         speechRecognizer.destroy()
     }
-
-    // --- RecognitionListener Methods ---
-    override fun onReadyForSpeech(params: Bundle?) {}
-    override fun onBeginningOfSpeech() {}
-    override fun onRmsChanged(rmsdB: Float) {}
-    override fun onBufferReceived(buffer: ByteArray?) {}
-    override fun onEndOfSpeech() {}
-    override fun onError(error: Int) {
-        val errorMessage = when (error) {
-            SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-            SpeechRecognizer.ERROR_CLIENT -> "Client side error"
-            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
-            SpeechRecognizer.ERROR_NETWORK -> "Network error"
-            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-            SpeechRecognizer.ERROR_NO_MATCH -> "No match"
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
-            SpeechRecognizer.ERROR_SERVER -> "Error from server"
-            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
-            else -> "Unknown speech recognition error"
-        }
-        viewModel.sendCommand("Error: $errorMessage")
-    }
-    override fun onResults(results: Bundle?) {
-        results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.get(0)?.let {
-            viewModel.sendCommand(it)
-        }
-    }
-    override fun onPartialResults(partialResults: Bundle?) {}
-    override fun onEvent(eventType: Int, params: Bundle?) {}
 }
 
 // --- UI ---
@@ -225,6 +187,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                 TopAppBar(
                     title = { Text("Super AI") },
                     actions = {
+                        // Settings icon - placeholder for future navigation
                         IconButton(onClick = { /* Navigate to settings */ }) {
                            // Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
@@ -238,6 +201,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
+                // Mode Toggle Switch
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -257,6 +221,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
 
                 Spacer(Modifier.height(16.dp))
 
+                // Messages Display
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(messages) { message ->
                         MessageBubble(message = message)
@@ -265,6 +230,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
 
                 Spacer(Modifier.height(8.dp))
 
+                // "Sync to Drive" Button - Placeholder
                 Button(onClick = { /* TODO: Implement file sharing logic */ }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                     Text("Sync Archive to Drive")
                 }
@@ -272,6 +238,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
 
                 Spacer(Modifier.height(8.dp))
 
+                // Input Row
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = text,
@@ -280,7 +247,7 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                         label = { Text("Type or speak...") }
                     )
                     IconButton(onClick = onVoiceInput) {
-                        Icon(Icons.Filled.Mic, contentDescription = "Voice Command")
+                        Icon(Icons.Default.Mic, contentDescription = "Voice Command")
                     }
                     Button(
                         onClick = {
@@ -303,6 +270,8 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
     }
 }
 
+import coil.compose.AsyncImage
+
 @Composable
 fun MessageBubble(message: ChatMessage) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -321,6 +290,7 @@ fun MessageBubble(message: ChatMessage) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(text = message.text)
 
+                // Display image if URL exists
                 if (!message.imageUrl.isNullOrEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     AsyncImage(
@@ -332,6 +302,7 @@ fun MessageBubble(message: ChatMessage) {
                     )
                 }
 
+                // Researcher Panel for AI messages
                 if (!message.isUser) {
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { isExpanded = !isExpanded }) {
