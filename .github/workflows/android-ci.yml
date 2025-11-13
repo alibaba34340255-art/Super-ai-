@@ -1,15 +1,15 @@
 # Robust Android CI for ubuntu-latest
-name: Android CI
+name: Android CI & Release
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "add-android-ci"]
     paths:
       - 'android-app/**'
       - 'build.gradle*'
       - 'gradle/**'
   pull_request:
-    branches: ["main"]
+    branches: ["main", "add-android-ci"]
     paths:
       - 'android-app/**'
       - 'build.gradle*'
@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   actions: write
   issues: write
 
@@ -30,12 +30,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
       SDK_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
       ANDROID_PLATFORM: "platforms;android-33"
       ANDROID_BUILD_TOOLS: "build-tools;33.0.2"
 
     steps:
+    - name: Set ANDROID_SDK_ROOT
+      run: echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+
     - name: Checkout
       uses: actions/checkout@v4
 
@@ -48,6 +50,9 @@ jobs:
 
     - name: Grant execute permission for gradlew
       run: chmod +x android-app/gradlew
+
+    - name: Create local.properties
+      run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android-app/local.properties
 
     - name: Cache Gradle
       uses: actions/cache@v4
@@ -71,22 +76,10 @@ jobs:
       run: |
         set -euo pipefail
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry() {
-          local n=1; local max=3; local delay=8
-          until "$@"; do
-            if [[ $n -ge $max ]]; then
-              echo "Command failed after $n attempts: $*"
-              return 1
-            fi
-            echo "Attempt $n failed for: $* — retrying in $delay s..."
-            sleep $delay
-            n=$((n+1))
-          done
-        }
         mkdir -p "$ANDROID_SDK_ROOT" "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT/licenses"
         if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ] || [ -z "$(ls -A $ANDROID_SDK_ROOT/cmdline-tools/latest 2>/dev/null)" ]; then
           tmpzip=/tmp/cmdline-tools.zip
-          retry wget -q "$SDK_TOOLS_URL" -O "$tmpzip"
+          wget -q "$SDK_TOOLS_URL" -O "$tmpzip"
           rm -rf /tmp/cmdline-tools
           mkdir -p /tmp/cmdline-tools
           unzip -q "$tmpzip" -d /tmp/cmdline-tools
@@ -95,7 +88,7 @@ jobs:
           rm -f "$tmpzip"
         fi
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
+        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS" || true
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
@@ -105,15 +98,6 @@ jobs:
         set -euo pipefail
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
         yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
-
-    - name: Ensure source directories exist (CI-only)
-      run: |
-        mkdir -p android-app/app/src/main/kotlin
-        mkdir -p android-app/app/src/debug/java
-        mkdir -p android-app/app/src/debug/kotlin
-        touch android-app/app/src/main/kotlin/.gitkeep || true
-        touch android-app/app/src/debug/java/.gitkeep || true
-        touch android-app/app/src/debug/kotlin/.gitkeep || true
 
     - name: Gradle assembleDebug (with retries & logs)
       working-directory: ./android-app
@@ -150,40 +134,46 @@ jobs:
         name: build-log
         path: android-app/build-artifacts/build.log
 
-    - name: Verify APK exists and upload artifact
-      run: |
-        apk_path="android-app/app/build/outputs/apk/debug/app-debug.apk"
-        if [ ! -f "$apk_path" ]; then
-          echo "APK not found at $apk_path"
-          ls -R android-app/app/build || true
-          exit 1
-        fi
-      shell: bash
-
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug.apk
         path: android-app/app/build/outputs/apk/debug/app-debug.apk
 
-    - name: Open GitHub issue on persistent failure
-      if: failure()
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const fs = require('fs');
-          const repo = context.repo;
-          let body = `Automated CI: build failed for commit ${{ github.sha }}.\n\nFirst ~400 lines of build log:\n\n`;
-          try {
-            const full = fs.readFileSync('android-app/build-artifacts/build.log','utf8');
-            body += "```\n" + full.split('\n').slice(0,400).join('\n') + "\n```\n\nFull log attached as artifact.";
-          } catch (e) {
-            body += "Could not read build log.";
-          }
-          await github.rest.issues.create({
-            owner: repo.owner,
-            repo: repo.repo,
-            title: `CI: build failed — ${new Date().toISOString().split('T')[0]}`,
-            body: body,
-            labels: ['ci','build-failure','automated']
-          })
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Decode Keystore
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+        run: |
+          echo $SIGNING_KEY_BASE64 | base64 --decode > android-app/keystore.jks
+
+      - name: Build Release APK
+        working-directory: ./android-app
+        env:
+          SIGNING_KEY_STORE_PATH: "keystore.jks"
+          SIGNING_KEY_STORE_PASSWORD: ${{ secrets.SIGNING_KEY_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: android-app/app/build/outputs/apk/release/app-release.apk
+          tag_name: ${{ github.ref_name }}
+          body: "Release APK for version ${{ github.ref_name }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

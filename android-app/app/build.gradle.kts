@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    kotlin("plugin.serialization")
 }
 
 android {
@@ -17,6 +18,15 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("SIGNING_KEY_STORE_PATH") ?: "keystore.jks")
+            storePassword = System.getenv("SIGNING_KEY_STORE_PASSWORD")
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -24,6 +34,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -41,7 +52,7 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
+        kotlinCompilerExtensionVersion = "1.5.4"
     }
 
     packaging {
@@ -62,18 +73,23 @@ dependencies {
 
     // Material Design
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("com.google.android.material:material:1.12.0") // For XML Themes
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.activity:activity-ktx:1.8.2")
+
+    // Navigation
+    implementation("androidx.navigation:navigation-compose:2.7.5")
 
     // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.5.0")
 
     // Ktor for networking
     implementation("io.ktor:ktor-client-core:2.3.6")
-    implementation("io.ktor:ktor-client-okhttp:2.3.6")
+    implementation("io.ktor:ktor-client-cio:2.3.6")
     implementation("io.ktor:ktor-client-content-negotiation:2.3.6")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.6")
 
