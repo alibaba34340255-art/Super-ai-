@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.*
+import coil.compose.AsyncImage
 
 // --- Data Classes for New Backend ---
 @Serializable
@@ -75,10 +76,10 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            json(Json {
+            Json {
                 isLenient = true
                 ignoreUnknownKeys = true
-            })
+            }
         }
         install(HttpRequestRetry) {
             retryOnServerErrors(maxRetries = 2)
@@ -269,8 +270,6 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
         }
     }
 }
-
-import coil.compose.AsyncImage
 
 @Composable
 fun MessageBubble(message: ChatMessage) {
