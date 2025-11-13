@@ -15,9 +15,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -67,7 +71,7 @@ data class ChatMessage(
 )
 
 // --- ViewModel ---
-class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
+class MainViewModel(private val tts: TextToSpeech, private val sharedViewModel: SharedViewModel) : ViewModel() {
     private val _messages = mutableStateListOf<ChatMessage>()
     val messages: List<ChatMessage> = _messages
     private val _isLoading = mutableStateOf(false)
@@ -90,9 +94,6 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
     // Corrected URL for the Python backend running on the host machine from the Android emulator
     private val backendUrl = "http://10.0.2.2:5000/api/generate"
 
-    // Placeholder for user-defined API key from settings
-    private val customGeminiApiKey = mutableStateOf<String?>(null) // e.g., "YOUR_GEMINI_API_KEY"
-
     fun sendCommand(command: String) {
         viewModelScope.launch {
             _isLoading.value = true
@@ -101,7 +102,7 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
                 val requestBody = BackendRequest(
                     prompt = command,
                     mode = _currentAiMode.value,
-                    custom_api_key = customGeminiApiKey.value
+                    custom_api_key = sharedViewModel.apiKey.value
                 )
                 val responseString = client.post(backendUrl) {
                     contentType(ContentType.Application.Json)
@@ -153,8 +154,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
 
         setContent {
-            val viewModel = MainViewModel(tts)
-            SuperAIApp(viewModel = viewModel, onVoiceInput = {
+            val sharedViewModel = SharedViewModel()
+            val viewModel = MainViewModel(tts, sharedViewModel)
+            SuperAIApp(viewModel = viewModel, sharedViewModel = sharedViewModel, onVoiceInput = {
                 speechRecognizer.startListening(speechRecognizerIntent)
             })
         }
@@ -177,7 +179,20 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 // --- UI ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
+fun SuperAIApp(viewModel: MainViewModel, sharedViewModel: SharedViewModel, onVoiceInput: () -> Unit) {
+    val navController = rememberNavController()
+    NavHost(navController = navController, startDestination = "main") {
+        composable("main") {
+            MainScreen(viewModel = viewModel, onVoiceInput = onVoiceInput, onSettingsClick = { navController.navigate("settings") })
+        }
+        composable("settings") {
+            SettingsScreen(sharedViewModel = sharedViewModel)
+        }
+    }
+}
+
+@Composable
+fun MainScreen(viewModel: MainViewModel, onVoiceInput: () -> Unit, onSettingsClick: () -> Unit) {
     var text by remember { mutableStateOf("") }
     val messages = viewModel.messages
     val isLoading = viewModel.isLoading.value
@@ -190,8 +205,8 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                     title = { Text("Super AI") },
                     actions = {
                         // Settings icon - placeholder for future navigation
-                        IconButton(onClick = { /* Navigate to settings */ }) {
-                           // Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        IconButton(onClick = onSettingsClick) {
+                           Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
                     }
                 )
@@ -269,6 +284,36 @@ fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SettingsScreen(sharedViewModel: SharedViewModel) {
+    var apiKey by remember { mutableStateOf("") }
+    val currentApiKey = sharedViewModel.apiKey.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Text("API Key", style = MaterialTheme.typography.headlineSmall)
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = { apiKey = it },
+            label = { Text("Enter your API key") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = { sharedViewModel.setApiKey(apiKey) },
+            modifier = Modifier.align(Alignment.End)
+        ) {
+            Text("Save")
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Text("Current API Key: ${currentApiKey.value ?: "Not set"}")
     }
 }
 
