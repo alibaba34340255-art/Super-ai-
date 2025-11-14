@@ -23,46 +23,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp // Import OkHttp engine
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.util.*
 import coil.compose.AsyncImage
-
-// --- Data Classes for New Backend ---
-@Serializable
-data class BackendRequest(val prompt: String, val mode: String, val custom_api_key: String? = null)
-
-@Serializable
-data class ResponsePayload(
-    val text: String,
-    val image_url: String? = null
-)
-
-@Serializable
-data class BackendResponse(
-    val status: String,
-    val response: ResponsePayload,
-    val model_used: String,
-    val diagnostic_report: String
-)
-
-// --- Chat Message Data Class ---
-data class ChatMessage(
-    val text: String,
-    val isUser: Boolean,
-    val imageUrl: String? = null,
-    val modelUsed: String? = null,
-    val diagnosticReport: String? = null
-)
+import com.example.superai.data.BackendRequest
+import com.example.superai.data.ChatMessage
+import com.example.superai.network.ApiClient
+import kotlinx.coroutines.launch
+import java.util.*
 
 // --- ViewModel ---
 class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
@@ -72,17 +38,6 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
     val isLoading: State<Boolean> = _isLoading
     private val _currentAiMode = mutableStateOf("powerful") // "powerful" or "own_system"
     val currentAiMode: State<String> = _currentAiMode
-
-    private val client = HttpClient(OkHttp) { // Use the OkHttp engine
-        install(ContentNegotiation) {
-            json(Json {
-                isLenient = true
-                ignoreUnknownKeys = true
-            })
-        }
-    }
-    // Corrected URL for the Python backend running on the host machine from the Android emulator
-    private val backendUrl = "http://10.0.2.2:5000/api/generate"
 
     // Placeholder for user-defined API key from settings
     private val customGeminiApiKey = mutableStateOf<String?>(null) // e.g., "YOUR_GEMINI_API_KEY"
@@ -97,12 +52,7 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
                     mode = _currentAiMode.value,
                     custom_api_key = customGeminiApiKey.value
                 )
-                val responseString = client.post(backendUrl) {
-                    contentType(ContentType.Application.Json)
-                    setBody(requestBody)
-                }.bodyAsText()
-
-                val backendResponse = Json.decodeFromString<BackendResponse>(responseString)
+                val backendResponse = ApiClient.send(requestBody)
                 val payload = backendResponse.response
 
                 val aiMessage = ChatMessage(
