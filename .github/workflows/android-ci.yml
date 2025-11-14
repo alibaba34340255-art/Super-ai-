@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/.android-sdk
       SDK_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
       ANDROID_PLATFORM: "platforms;android-33"
       ANDROID_BUILD_TOOLS: "build-tools;33.0.2"
@@ -66,7 +66,7 @@ jobs:
         key: android-cmdline-${{ runner.os }}-${{ hashFiles('.github/workflows/android-ci.yml') }}
         restore-keys: android-cmdline-${{ runner.os }}-
 
-    - name: Install Android cmdline-tools & SDK (with retry)
+    - name: Install Android SDK and Accept Licenses
       shell: bash
       run: |
         set -euo pipefail
@@ -95,16 +95,18 @@ jobs:
           rm -f "$tmpzip"
         fi
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
+
+        # Accept licenses first to prevent interactive prompts, ignore broken pipe errors
+        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+
+        # Install packages individually to make debugging easier
+        retry sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools"
+        retry sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_PLATFORM"
+        retry sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "$ANDROID_BUILD_TOOLS"
+
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-
-    - name: Accept Android SDK licenses
-      run: |
-        set -euo pipefail
-        export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
 
     - name: Ensure source directories exist (CI-only)
       run: |
