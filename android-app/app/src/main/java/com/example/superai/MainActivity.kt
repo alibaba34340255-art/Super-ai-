@@ -23,105 +23,52 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp // Import OkHttp engine
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.util.*
 import coil.compose.AsyncImage
-
-// --- Data Classes for New Backend ---
-@Serializable
-data class BackendRequest(val prompt: String, val mode: String, val custom_api_key: String? = null)
-
-@Serializable
-data class ResponsePayload(
-    val text: String,
-    val image_url: String? = null
-)
-
-@Serializable
-data class BackendResponse(
-    val status: String,
-    val response: ResponsePayload,
-    val model_used: String,
-    val diagnostic_report: String
-)
-
-// --- Chat Message Data Class ---
-data class ChatMessage(
-    val text: String,
-    val isUser: Boolean,
-    val imageUrl: String? = null,
-    val modelUsed: String? = null,
-    val diagnosticReport: String? = null
-)
+import com.example.superai.model.BackendRequest
+import com.example.superai.model.ChatMessage
+import com.example.superai.network.ApiClient
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.*
 
 // --- ViewModel ---
 class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
-    private val _messages = mutableStateListOf<ChatMessage>()
-    val messages: List<ChatMessage> = _messages
-    private val _isLoading = mutableStateOf(false)
-    val isLoading: State<Boolean> = _isLoading
-    private val _currentAiMode = mutableStateOf("powerful") // "powerful" or "own_system"
-    val currentAiMode: State<String> = _currentAiMode
+    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
-    private val client = HttpClient(OkHttp) { // Use the OkHttp engine
-        install(ContentNegotiation) {
-            json(Json {
-                isLenient = true
-                ignoreUnknownKeys = true
-            })
-        }
-    }
-    // Corrected URL for the Python backend running on the host machine from the Android emulator
-    private val backendUrl = "http://10.0.2.2:5000/api/generate"
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Placeholder for user-defined API key from settings
-    private val customGeminiApiKey = mutableStateOf<String?>(null) // e.g., "YOUR_GEMINI_API_KEY"
+    private val _currentAiMode = MutableStateFlow("powerful") // "powerful" or "own_system"
+    val currentAiMode: StateFlow<String> = _currentAiMode.asStateFlow()
 
     fun sendCommand(command: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            _messages.add(ChatMessage(text = command, isUser = true)) // Add user message
-            try {
-                val requestBody = BackendRequest(
-                    prompt = command,
-                    mode = _currentAiMode.value,
-                    custom_api_key = customGeminiApiKey.value
-                )
-                val responseString = client.post(backendUrl) {
-                    contentType(ContentType.Application.Json)
-                    setBody(requestBody)
-                }.bodyAsText()
+            _messages.value = _messages.value + ChatMessage(text = command, isUser = true)
 
-                val backendResponse = Json.decodeFromString<BackendResponse>(responseString)
-                val payload = backendResponse.response
+            val requestBody = BackendRequest(
+                prompt = command,
+                mode = _currentAiMode.value,
+            )
+            val backendResponse = ApiClient.send(requestBody)
 
+            if (backendResponse.error != null) {
+                _messages.value = _messages.value + ChatMessage(text = backendResponse.error, isUser = false)
+                tts.speak(backendResponse.error, TextToSpeech.QUEUE_FLUSH, null, null)
+            } else {
                 val aiMessage = ChatMessage(
-                    text = payload.text,
+                    text = backendResponse.text ?: "No response text.",
                     isUser = false,
-                    imageUrl = payload.image_url,
-                    modelUsed = backendResponse.model_used,
-                    diagnosticReport = backendResponse.diagnostic_report
+                    imageUrl = backendResponse.images?.firstOrNull(),
+                    diagnosticReport = backendResponse.diagnostics?.toString()
                 )
-                _messages.add(aiMessage) // Add AI message
-                tts.speak(payload.text, TextToSpeech.QUEUE_FLUSH, null, null)
-
-            } catch (e: Exception) {
-                val errorMsg = "Error: Could not connect to backend. ${e.message}"
-                _messages.add(ChatMessage(text = errorMsg, isUser = false))
-                tts.speak(errorMsg, TextToSpeech.QUEUE_FLUSH, null, null)
-            } finally {
-                _isLoading.value = false
+                _messages.value = _messages.value + aiMessage
+                tts.speak(aiMessage.text, TextToSpeech.QUEUE_FLUSH, null, null)
             }
+            _isLoading.value = false
         }
     }
     fun setAiMode(mode: String) { _currentAiMode.value = mode }
@@ -173,9 +120,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 @Composable
 fun SuperAIApp(viewModel: MainViewModel, onVoiceInput: () -> Unit) {
     var text by remember { mutableStateOf("") }
-    val messages = viewModel.messages
-    val isLoading = viewModel.isLoading.value
-    val currentMode = viewModel.currentAiMode.value
+    val messages by viewModel.messages.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val currentMode by viewModel.currentAiMode.collectAsState()
 
     MaterialTheme {
         Scaffold(
