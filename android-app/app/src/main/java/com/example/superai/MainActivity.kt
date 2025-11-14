@@ -34,6 +34,7 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import io.ktor.serialization.kotlinx.json.json
 import java.util.*
 import coil.compose.AsyncImage
 
