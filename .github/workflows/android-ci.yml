@@ -1,4 +1,3 @@
-# Robust Android CI for ubuntu-latest
 name: Android CI
 
 on:
@@ -29,11 +28,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+
     env:
       ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
       SDK_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-      ANDROID_PLATFORM: "platforms;android-33"
-      ANDROID_BUILD_TOOLS: "build-tools;33.0.2"
+      ANDROID_PLATFORM: "platforms;android-34"
+      ANDROID_BUILD_TOOLS: "build-tools;34.0.0"
 
     steps:
     - name: Checkout
@@ -66,56 +66,46 @@ jobs:
         key: android-cmdline-${{ runner.os }}-${{ hashFiles('.github/workflows/android-ci.yml') }}
         restore-keys: android-cmdline-${{ runner.os }}-
 
-    - name: Install Android cmdline-tools & SDK (with retry)
+    - name: Install Android cmdline-tools & SDK
       shell: bash
       run: |
         set -euo pipefail
-        export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry() {
-          local n=1; local max=3; local delay=8
-          until "$@"; do
-            if [[ $n -ge $max ]]; then
-              echo "Command failed after $n attempts: $*"
-              return 1
-            fi
-            echo "Attempt $n failed for: $* — retrying in $delay s..."
-            sleep $delay
-            n=$((n+1))
-          done
-        }
-        mkdir -p "$ANDROID_SDK_ROOT" "$ANDROID_SDK_ROOT/cmdline-tools" "$ANDROID_SDK_ROOT/licenses"
-        if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ] || [ -z "$(ls -A $ANDROID_SDK_ROOT/cmdline-tools/latest 2>/dev/null)" ]; then
-          tmpzip=/tmp/cmdline-tools.zip
-          retry wget -q "$SDK_TOOLS_URL" -O "$tmpzip"
-          rm -rf /tmp/cmdline-tools
-          mkdir -p /tmp/cmdline-tools
-          unzip -q "$tmpzip" -d /tmp/cmdline-tools
+
+        mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+        mkdir -p "$ANDROID_SDK_ROOT/licenses"
+
+        # Download cmdline-tools if missing
+        if [ ! -d "$ANDROID_SDK_ROOT/cmdline-tools/latest" ]; then
+          echo "Downloading cmdline-tools..."
+          wget -q "$SDK_TOOLS_URL" -O /tmp/cmdline.zip
+          unzip -q /tmp/cmdline.zip -d /tmp/cmd
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          mv /tmp/cmdline-tools/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
-          rm -f "$tmpzip"
+          mv /tmp/cmd/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
         fi
+
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        retry yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS"
+
+        # Install SDK packages safely (NO BROKEN PIPE)
+        echo "Installing SDK packages..."
+        sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
+          "platform-tools" "$ANDROID_PLATFORM" "$ANDROID_BUILD_TOOLS" <<< "y"
+
         echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
         echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
     - name: Accept Android SDK licenses
       run: |
-        set -euo pipefail
         export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-        yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+        sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses <<< "y" >/dev/null 2>&1 || true
 
-    - name: Ensure source directories exist (CI-only)
+    - name: Ensure source directories exist
       run: |
         mkdir -p android-app/app/src/main/kotlin
         mkdir -p android-app/app/src/debug/java
         mkdir -p android-app/app/src/debug/kotlin
-        touch android-app/app/src/main/kotlin/.gitkeep || true
-        touch android-app/app/src/debug/java/.gitkeep || true
-        touch android-app/app/src/debug/kotlin/.gitkeep || true
 
-    - name: Gradle assembleDebug (with retries & logs)
+    - name: Build APK
       working-directory: ./android-app
       shell: bash
       env:
@@ -123,42 +113,46 @@ jobs:
       run: |
         set -euo pipefail
         mkdir -p build-artifacts
+
         attempt=1
         max_attempts=3
         exit_code=0
+
         while [ $attempt -le $max_attempts ]; do
           echo "Gradle build attempt $attempt/$max_attempts"
           ./gradlew assembleDebug --stacktrace --warning-mode=all 2>&1 | tee build-artifacts/build.log
           exit_code=${PIPESTATUS[0]}
+
           if [ "$exit_code" -eq 0 ]; then
-            echo "Build succeeded on attempt $attempt"
+            echo "Build succeeded!"
             break
           fi
-          echo "Build failed (exit $exit_code) on attempt $attempt"
+
+          echo "Build failed — retrying..."
           attempt=$((attempt+1))
-          sleep 10
+          sleep 8
         done
+
         if [ "$exit_code" -ne 0 ]; then
-          echo "Build failed after $max_attempts attempts — see build-artifacts/build.log"
+          echo "Build failed after retries."
           exit $exit_code
         fi
 
-    - name: Upload build log (always)
+    - name: Upload build log
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: build-log
         path: android-app/build-artifacts/build.log
 
-    - name: Verify APK exists and upload artifact
+    - name: Verify APK exists
       run: |
-        apk_path="android-app/app/build/outputs/apk/debug/app-debug.apk"
-        if [ ! -f "$apk_path" ]; then
-          echo "APK not found at $apk_path"
+        apk="android-app/app/build/outputs/apk/debug/app-debug.apk"
+        if [ ! -f "$apk" ]; then
+          echo "APK missing!"
           ls -R android-app/app/build || true
           exit 1
         fi
-      shell: bash
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
@@ -166,24 +160,26 @@ jobs:
         name: app-debug.apk
         path: android-app/app/build/outputs/apk/debug/app-debug.apk
 
-    - name: Open GitHub issue on persistent failure
+    - name: Create Issue on Failure
       if: failure()
       uses: actions/github-script@v6
       with:
         script: |
           const fs = require('fs');
           const repo = context.repo;
-          let body = `Automated CI: build failed for commit ${{ github.sha }}.\n\nFirst ~400 lines of build log:\n\n`;
-          try {
+          let content = "Build failed for commit " + context.sha + "\\n\\n";
+
+          if (fs.existsSync('android-app/build-artifacts/build.log')) {
             const full = fs.readFileSync('android-app/build-artifacts/build.log','utf8');
-            body += "```\n" + full.split('\n').slice(0,400).join('\n') + "\n```\n\nFull log attached as artifact.";
-          } catch (e) {
-            body += "Could not read build log.";
+            content += "```\n" + full.split('\n').slice(0,400).join('\n') + "\n```";
+          } else {
+            content += "No log found.";
           }
-          await github.rest.issues.create({
+
+          github.rest.issues.create({
             owner: repo.owner,
             repo: repo.repo,
-            title: `CI: build failed — ${new Date().toISOString().split('T')[0]}`,
-            body: body,
-            labels: ['ci','build-failure','automated']
-          })
+            title: "CI Failure",
+            body: content,
+            labels: ['ci','build-failure']
+          });
