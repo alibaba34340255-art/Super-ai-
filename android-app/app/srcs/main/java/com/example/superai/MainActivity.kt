@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,12 +21,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.superai.model.BackendRequest
 import com.example.superai.model.ChatMessage
 import com.example.superai.network.ApiClient
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.api.client.extensions.android.http.AndroidHttp
+import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
+import com.google.api.client.http.InputStreamContent
+import com.google.api.client.json.gson.GsonFactory
+import com.google.api.services.drive.Drive
+import com.google.api.services.drive.DriveScopes
+import com.google.api.services.drive.model.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,11 +90,54 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private lateinit var tts: TextToSpeech
     private lateinit var speechRecognizer: SpeechRecognizer
+    private lateinit var driveService: Drive
 
     private val speechRecognizerIntent by lazy {
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        }
+    }
+
+    private val googleSignInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.result
+                val credential = GoogleAccountCredential.usingOAuth2(
+                    this, listOf(DriveScopes.DRIVE_FILE)
+                )
+                credential.selectedAccount = account.account
+
+                driveService = Drive.Builder(
+                    AndroidHttp.newCompatibleTransport(),
+                    GsonFactory.getDefaultInstance(),
+                    credential
+                )
+                .setApplicationName("Super AI")
+                .build()
+
+                uploadTestFile()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Google Sign-In failed", e)
+            }
+        }
+    }
+
+    private fun uploadTestFile() {
+        lifecycleScope.launch {
+            try {
+                val fileMetadata = File().setName("test.txt")
+                val fileContent = "Hello Drive".byteInputStream()
+                val mediaContent = InputStreamContent("text/plain", fileContent)
+
+                val file = driveService.files().create(fileMetadata, mediaContent)
+                    .setFields("id")
+                    .execute()
+                Log.d("MainActivity", "Uploaded file ID: ${file.id}")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error uploading file to Drive", e)
+            }
         }
     }
 
@@ -94,16 +149,22 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
 
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestScopes(Scope(DriveScopes.DRIVE_FILE))
+            .requestIdToken("243517148974-7tuqb901hcdtg6nb8tcji7llrpp1lvgo.apps.googleusercontent.com")
+            .build()
+        val googleSignInClient = GoogleSignIn.getClient(this, gso)
+
         setContent {
-            val viewModel: MainViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return MainViewModel(tts) as T
-                }
-            })
+            val viewModel: MainViewModel = viewModel()
             SuperAIApp(
                 viewModel = viewModel,
                 onVoiceInput = {
                     speechRecognizer.startListening(speechRecognizerIntent)
+                },
+                onSyncToDrive = {
+                    googleSignInLauncher.launch(googleSignInClient.signInIntent)
                 }
             )
         }
@@ -128,7 +189,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 @Composable
 fun SuperAIApp(
     viewModel: MainViewModel,
-    onVoiceInput: () -> Unit
+    onVoiceInput: () -> Unit,
+    onSyncToDrive: () -> Unit
 ) {
     var text by remember { mutableStateOf("") }
     val messages by viewModel.messages.collectAsState()
@@ -179,6 +241,13 @@ fun SuperAIApp(
                         MessageBubble(message = message)
                     }
                 }
+
+                Spacer(Modifier.height(8.dp))
+
+                Button(onClick = onSyncToDrive, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text("Sync Archive to Drive")
+                }
+
 
                 Spacer(Modifier.height(8.dp))
 
