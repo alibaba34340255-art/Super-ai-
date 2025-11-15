@@ -3,27 +3,13 @@ package com.example.superai
 import android.Manifest
 import android.content.Intent
 import android.os.Bundle
-import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.Scope
-import com.google.api.services.drive.DriveScopes
-import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
-import com.google.api.client.json.gson.GsonFactory
-import com.google.api.services.drive.Drive
-import com.google.api.services.drive.model.File
-import com.google.api.client.http.InputStreamContent
-import com.google.api.client.extensions.android.http.AndroidHttp
-import androidx.lifecycle.lifecycleScope
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.serialization.kotlinx.json.json
-import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -33,109 +19,68 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp // Import OkHttp engine
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.util.*
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-
-// --- Data Classes for New Backend ---
-@Serializable
-data class BackendRequest(val prompt: String, val mode: String, val custom_api_key: String? = null)
-
-@Serializable
-data class ResponsePayload(
-    val text: String,
-    val image_url: String? = null
-)
-
-@Serializable
-data class BackendResponse(
-    val status: String,
-    val response: ResponsePayload,
-    val model_used: String,
-    val diagnostic_report: String
-)
-
-// --- Chat Message Data Class ---
-data class ChatMessage(
-    val text: String,
-    val isUser: Boolean,
-    val imageUrl: String? = null,
-    val modelUsed: String? = null,
-    val diagnosticReport: String? = null
-)
+import com.example.superai.model.BackendRequest
+import com.example.superai.model.ChatMessage
+import com.example.superai.network.ApiClient
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.api.client.extensions.android.http.AndroidHttp
+import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
+import com.google.api.client.http.InputStreamContent
+import com.google.api.client.json.gson.GsonFactory
+import com.google.api.services.drive.Drive
+import com.google.api.services.drive.DriveScopes
+import com.google.api.services.drive.model.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.*
 
 // --- ViewModel ---
 class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
-    private val _messages = mutableStateListOf<ChatMessage>()
-    val messages: List<ChatMessage> = _messages
-    private val _isLoading = mutableStateOf(false)
-    val isLoading: State<Boolean> = _isLoading
-    private val _currentAiMode = mutableStateOf("powerful") // "powerful" or "own_system"
-    val currentAiMode: State<String> = _currentAiMode
+    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
-    private val client = HttpClient(OkHttp) { // Use the OkHttp engine
-        install(ContentNegotiation) {
-            json(Json {
-                isLenient = true
-                ignoreUnknownKeys = true
-            })
-        }
-    }
-    // Corrected URL for the Python backend running on the host machine from the Android emulator
-    private val backendUrl = "http://10.0.2.2:5000/api/generate"
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // Placeholder for user-defined API key from settings
-    private val customGeminiApiKey = mutableStateOf<String?>(null) // e.g., "YOUR_GEMINI_API_KEY"
+    private val _currentAiMode = MutableStateFlow("powerful") // "powerful" or "own_system"
+    val currentAiMode: StateFlow<String> = _currentAiMode.asStateFlow()
 
     fun sendCommand(command: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            _messages.add(ChatMessage(text = command, isUser = true)) // Add user message
-            try {
-                val requestBody = BackendRequest(
-                    prompt = command,
-                    mode = _currentAiMode.value,
-                    custom_api_key = customGeminiApiKey.value
-                )
-                val responseString = client.post(backendUrl) {
-                    contentType(ContentType.Application.Json)
-                    setBody(requestBody)
-                }.bodyAsText()
+            _messages.value = _messages.value + ChatMessage(text = command, isUser = true)
 
-                val backendResponse = Json.decodeFromString<BackendResponse>(responseString)
-                val payload = backendResponse.response
+            val requestBody = BackendRequest(
+                prompt = command,
+                mode = _currentAiMode.value,
+            )
+            val backendResponse = ApiClient.send(requestBody)
 
+            if (backendResponse.error != null) {
+                val errorMessage = "Error: ${backendResponse.error}"
+                _messages.value = _messages.value + ChatMessage(text = errorMessage, isUser = false)
+                tts.speak(errorMessage, TextToSpeech.QUEUE_FLUSH, null, null)
+            } else {
                 val aiMessage = ChatMessage(
-                    text = payload.text,
+                    text = backendResponse.text ?: "No response text.",
                     isUser = false,
-                    imageUrl = payload.image_url,
-                    modelUsed = backendResponse.model_used,
-                    diagnosticReport = backendResponse.diagnostic_report
+                    imageUrl = backendResponse.images?.firstOrNull(),
+                    diagnosticReport = backendResponse.diagnostics?.toString()
                 )
-                _messages.add(aiMessage) // Add AI message
-                tts.speak(payload.text, TextToSpeech.QUEUE_FLUSH, null, null)
-
-            } catch (e: Exception) {
-                val errorMsg = "Error: Could not connect to backend. ${e.message}"
-                _messages.add(ChatMessage(text = errorMsg, isUser = false))
-                tts.speak(errorMsg, TextToSpeech.QUEUE_FLUSH, null, null)
-            } finally {
-                _isLoading.value = false
+                _messages.value = _messages.value + aiMessage
+                tts.speak(aiMessage.text, TextToSpeech.QUEUE_FLUSH, null, null)
             }
+            _isLoading.value = false
         }
     }
     fun setAiMode(mode: String) { _currentAiMode.value = mode }
@@ -145,6 +90,8 @@ class MainViewModel(private val tts: TextToSpeech) : ViewModel() {
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private lateinit var tts: TextToSpeech
     private lateinit var speechRecognizer: SpeechRecognizer
+    private lateinit var driveService: Drive
+
     private val speechRecognizerIntent by lazy {
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -152,44 +99,44 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private lateinit var driveService: Drive
-
     private val googleSignInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
             val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-            val account = task.result
-            val credential = GoogleAccountCredential.usingOAuth2(
-                this, listOf(DriveScopes.DRIVE_FILE)
-            )
-            credential.selectedAccount = account.account
+            try {
+                val account = task.result
+                val credential = GoogleAccountCredential.usingOAuth2(
+                    this, listOf(DriveScopes.DRIVE_FILE)
+                )
+                credential.selectedAccount = account.account
 
-            driveService = Drive.Builder(
-                AndroidHttp.newCompatibleTransport(),
-                GsonFactory(),
-                credential
-            )
-            .setApplicationName("Super AI")
-            .build()
+                driveService = Drive.Builder(
+                    AndroidHttp.newCompatibleTransport(),
+                    GsonFactory.getDefaultInstance(),
+                    credential
+                )
+                .setApplicationName("Super AI")
+                .build()
 
-            uploadTestFile()
+                uploadTestFile()
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Google Sign-In failed", e)
+            }
         }
     }
 
     private fun uploadTestFile() {
-        val fileMetadata = File()
-        fileMetadata.name = "test.txt"
-
-        val fileContent = "Hello Drive".byteInputStream()
-        val mediaContent = InputStreamContent("text/plain", fileContent)
-
         lifecycleScope.launch {
             try {
+                val fileMetadata = File().setName("test.txt")
+                val fileContent = "Hello Drive".byteInputStream()
+                val mediaContent = InputStreamContent("text/plain", fileContent)
+
                 val file = driveService.files().create(fileMetadata, mediaContent)
                     .setFields("id")
                     .execute()
-                Log.d("Drive", "Uploaded file ID: ${file.id}")
+                Log.d("MainActivity", "Uploaded file ID: ${file.id}")
             } catch (e: Exception) {
-                Log.e("Drive", "Error uploading file", e)
+                Log.e("MainActivity", "Error uploading file to Drive", e)
             }
         }
     }
@@ -210,7 +157,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val googleSignInClient = GoogleSignIn.getClient(this, gso)
 
         setContent {
-            val viewModel = MainViewModel(tts)
+            val viewModel: MainViewModel = viewModel()
             SuperAIApp(
                 viewModel = viewModel,
                 onVoiceInput = {
@@ -246,9 +193,9 @@ fun SuperAIApp(
     onSyncToDrive: () -> Unit
 ) {
     var text by remember { mutableStateOf("") }
-    val messages = viewModel.messages
-    val isLoading = viewModel.isLoading.value
-    val currentMode = viewModel.currentAiMode.value
+    val messages by viewModel.messages.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val currentMode by viewModel.currentAiMode.collectAsState()
 
     MaterialTheme {
         Scaffold(
@@ -270,7 +217,6 @@ fun SuperAIApp(
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
-                // Mode Toggle Switch
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -290,7 +236,6 @@ fun SuperAIApp(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Messages Display
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(messages) { message ->
                         MessageBubble(message = message)
@@ -299,7 +244,6 @@ fun SuperAIApp(
 
                 Spacer(Modifier.height(8.dp))
 
-                // "Sync to Drive" Button
                 Button(onClick = onSyncToDrive, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                     Text("Sync Archive to Drive")
                 }
@@ -307,7 +251,6 @@ fun SuperAIApp(
 
                 Spacer(Modifier.height(8.dp))
 
-                // Input Row
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = text,
@@ -357,7 +300,6 @@ fun MessageBubble(message: ChatMessage) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(text = message.text)
 
-                // Display image if URL exists
                 if (!message.imageUrl.isNullOrEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     AsyncImage(
@@ -369,7 +311,6 @@ fun MessageBubble(message: ChatMessage) {
                     )
                 }
 
-                // Researcher Panel for AI messages
                 if (!message.isUser) {
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { isExpanded = !isExpanded }) {
