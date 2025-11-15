@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: super-ai-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --timeout 120
+    envVars: {}
