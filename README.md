@@ -1,52 +1,41 @@
-# Project Athena: An Advanced, Self-Healing, AI-Powered Research Assistant
+# Super AI
 
-Welcome to Project Athena, a next-generation AI research assistant designed to be powerful, resilient, secure, and incredibly user-friendly. This project combines multiple AI agents, a self-healing architecture, and a rich, intuitive Android interface to deliver a seamless research experience.
+This project consists of an Android application and a Python backend.
 
-## Core Features
+## Running the Application
 
-- **Dual AI Core & Self-Healing System**: Automatically switches between a powerful cloud model and a local agent swarm, ensuring the system is always available.
-- **The Eternal Archive**: A long-term memory system that caches results for lightning-fast responses (1-3 seconds). It features:
-    - **The Librarian**: Automatically categorizes and indexes data.
-    - **The Verifier**: Ensures data integrity with digital fingerprints.
-    - **User-Controlled Sync**: Sync your archive to your Google Drive without any APIs.
-- **The Gatekeeper Security Protocol**: A three-phase defense system (`Sentry`, `Interrogator`, `Guardian`) that scans all incoming data for threats.
-- **Resilient Swarm Intelligence**: A parallel data scraping system that automatically detects, debugs, and recovers from failures, ensuring maximum reliability.
-- **Advanced Research Suite**:
-    - **Hypothesis Expansion Core**: Breaks down simple questions into deep, analytical sub-questions.
-    - **Cross-Verification Fact-Checker**: Compares data from multiple sources to ensure accuracy.
-    - **Academic Integrity Suite**: (Future) Plagiarism detection and paraphrasing.
-- **"Zero-Code" Data Visualization Engine**: Automatically generates graphs and charts from natural language commands (e.g., "show me a bar chart of...") using R and ggplot2.
-- **AI-Powered Image Curation**: Enriches text responses with relevant, high-quality images from free sources like Pexels.
-- **Fully Bilingual**: Supports both English and Bengali seamlessly.
-- **Adaptive Connectivity**: Automatically configures network settings to work in both a hosted environment and a local machine.
+To run the application, you need to start both the backend server and the Android app.
 
-## Architecture Overview
+### 1. Start the Backend Server
 
-- **Backend**: A modular Flask application written in Python. It serves a robust API for the Android app.
-- **Frontend**: A native Android application built with Kotlin and Jetpack Compose for a modern and reactive UI.
-- **CI/CD**: A GitHub Actions workflow automatically builds a downloadable APK on every push to the `main` branch.
+The backend is a Python Flask application located in the `api` directory.
 
-## Getting Started
+**Installation:**
 
-### Backend Setup
+First, install the required Python packages:
 
-1.  Navigate to the `api/` directory.
-2.  Create a virtual environment: `python3 -m venv venv` and `source venv/bin/activate`.
-3.  Install the required dependencies: `pip install -r requirements.txt`.
-4.  (Optional) For the image curation feature, create a `.env` file (use `.env.example` as a template) and add your Pexels API key.
-5.  Run the server: `python3 app.py`.
+```bash
+pip install -r api/requirements.txt
+```
 
-### Android App Setup
+**Running the server:**
 
-1.  Open the `android-app/` directory in Android Studio.
-2.  Let Gradle sync the dependencies.
-3.  Run the app on an emulator or a physical device. The app will automatically connect to the backend running on your local machine.
+Once the dependencies are installed, you can start the server:
 
-## Future Enhancements
+```bash
+python3 api/app.py
+```
 
--   Implement the "Academic Integrity Suite".
--   Enable the "Dynamic Integration Hub" for user-controlled data sources.
--   Fully implement the R-based data visualization engine with `rpy2`.
+The server will start on `0.0.0.0:5000`. Keep this terminal window open.
 
----
-*This project was developed by Jules, your AI Software Engineer.*
+### 2. Run the Android App
+
+The Android app is located in the `android-app` directory.
+
+**Build and Run:**
+
+1.  Open the `android-app` project in Android Studio.
+2.  Let Gradle sync and build the project.
+3.  Run the app on an Android emulator or a physical device.
+
+The app will automatically connect to the backend server at `http://10.0.2.2:5000` (the default address for the host machine from the Android emulator).
